@@ -1,0 +1,162 @@
+# Cargar las bibliotecas necesarias al inicio
+library(tidyverse)
+library(agricolae)
+library(ggplot2)
+
+# Función para crear directorio de resultados
+create_output_dir <- function() {
+  dir_name <- "resultados_analisis"
+  if (!dir.exists(dir_name)) dir.create(dir_name)
+  return(dir_name)
+}
+
+# Función para validar datos
+validate_data <- function(data) {
+  required_cols <- c("PP", "SUB_P", "REP", "VAR")
+  if (!all(required_cols %in% names(data))) {
+    stop("Faltan columnas requeridas en los datos")
+  }
+  return(TRUE)
+}
+
+# Lectura y preparación de datos
+read_and_prepare_data <- function() {
+  parcela <- read.delim("clipboard")
+  validate_data(parcela)
+  
+  # Conversión de variables usando mutate
+  parcela <- parcela %>%
+    mutate(
+      PP = factor(PP),
+      SUB_P = factor(SUB_P),
+      REP = factor(REP),
+      VAR1 = as.numeric(VAR)
+    )
+  
+  return(parcela)
+}
+
+# Función para crear gráficos de interacción usando ggplot2
+create_interaction_plot <- function(data, output_dir) {
+  plot <- ggplot(data, aes(x = SUB_P, y = VAR1, color = PP, group = PP)) +
+    stat_summary(fun = mean, geom = "point", size = 3) +
+    stat_summary(fun = mean, geom = "line") +
+    theme_minimal() +
+    labs(
+      title = "Gráfico de interacción PP x SUB_P",
+      x = "SUB_P",
+      y = "Media de VAR",
+      color = "PP"
+    ) +
+    theme(text = element_text(size = 12))
+  
+  # Guardar el gráfico como archivo
+  ggsave(
+    filename = file.path(output_dir, "grafico_interaccion_actualizado.png"),
+    plot = plot,
+    width = 10,
+    height = 7,
+    dpi = 300
+  )
+  
+  return(plot)
+}
+
+# Función para análisis estadístico
+run_statistical_analysis <- function(data) {
+  # Modelo de parcelas divididas
+  mod.DCA <- aov(VAR1 ~ PP + Error(REP:PP) + SUB_P + PP:SUB_P, data = data)
+  mod.residuos <- aov(VAR1 ~ PP * SUB_P + REP / PP, data = data)
+  
+  # Tests de diagnóstico
+  normality_test <- shapiro.test(mod.residuos$residuals)
+  
+  # Pruebas de Bartlett explícitas
+  bartlett_PP <- bartlett.test(mod.residuos$residuals ~ data$PP)
+  bartlett_SUB_P <- bartlett.test(mod.residuos$residuals ~ data$SUB_P)
+  bartlett_interaction <- bartlett.test(mod.residuos$residuals ~ interaction(data$PP, data$SUB_P))
+  
+  homogeneity_tests <- list(
+    PP = bartlett_PP,
+    SUB_P = bartlett_SUB_P,
+    Interaction = bartlett_interaction
+  )
+  
+  ######### Pruebas de Tukey########
+  #######SUSTITUIR VALORES DE ACUERDO A LA ANOVA######
+  tukey_results <- list(
+    PP = HSD.test(data$VAR1, data$PP, DFerror = 6, MSerror = 10.25), # Sustituir de los residuales
+    SUB_P = HSD.test(data$VAR1, data$SUB_P, DFerror = 18  , MSerror = 8.76), # Sustituir de los residuales
+    Interaction = HSD.test(data$VAR1, interaction(data$PP, data$SUB_P), # Sustituir de los residuales
+                           DFerror = 18  , MSerror = 8.76)
+  )
+  
+  return(list(
+    model = mod.DCA,
+    residuals_model = mod.residuos,
+    normality = normality_test,
+    homogeneity = homogeneity_tests,
+    tukey = tukey_results
+  ))
+}
+
+# Función para crear gráficos de diagnóstico
+create_diagnostic_plots <- function(model, output_dir) {
+  # Crear el primer gráfico de diagnóstico
+  png(file.path(output_dir, "diagnostico_residuos_vs_ajustados.png"), 
+      width = 800, height = 600, res = 100)
+  plot(model, 1)
+  dev.off()
+  
+  # Crear el segundo gráfico de diagnóstico
+  png(file.path(output_dir, "diagnostico_qq_plot.png"), 
+      width = 800, height = 600, res = 100)
+  plot(model, 2)
+  dev.off()
+}
+
+# Función principal
+main_analysis <- function() {
+  output_dir <- create_output_dir()
+  
+  # Lectura y preparación de datos
+  data <- read_and_prepare_data()
+  
+  # Crear gráficos
+  interaction_plot <- create_interaction_plot(data, output_dir)
+  
+  # Realizar análisis estadístico
+  results <- run_statistical_analysis(data)
+  
+  # Crear gráficos de diagnóstico
+  create_diagnostic_plots(results$residuals_model, output_dir)
+  
+  # Imprimir resultados
+  cat("\n\n=== RESUMEN DEL MODELO ===\n")
+  print(summary(results$model))
+  
+  cat("\n\n=== PRUEBA DE NORMALIDAD ===\n")
+  print(results$normality)
+  
+  cat("\n\n=== PRUEBAS DE HOMOGENEIDAD DE VARIANZAS (BARTLETT) ===\n")
+  cat("\nPrueba de Bartlett para PP:\n")
+  print(results$homogeneity$PP)
+  
+  cat("\nPrueba de Bartlett para SUB_P:\n")
+  print(results$homogeneity$SUB_P)
+  
+  cat("\nPrueba de Bartlett para la interacción PP:SUB_P:\n")
+  print(results$homogeneity$Interaction)
+  
+  cat("\n\n=== RESULTADOS DE TUKEY ===\n")
+  print(results$tukey)
+  
+  return(results)
+}
+
+# Ejecutar el análisis
+results <- main_analysis()
+
+#Para borrar todos los objetos del Script, ejecute lo siguiente:
+rm(list=ls())
+
